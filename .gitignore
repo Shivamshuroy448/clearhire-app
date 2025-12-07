@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# Google Credentials (VERY IMPORTANT)
+credentials.json
+token.json
+token_*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Render/Cloud
+.render-build/
+
+# Node/Frontend
+node_modules/
+.package-lock.json
