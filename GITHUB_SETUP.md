@@ -13,7 +13,7 @@ Copy the commands shown on GitHub under "…or push an existing repository from 
 
 They will look like this:
 ```bash
-cd c:/Users/lovel/.gemini/antigravity/playground/cryo-supernova/clearhire_production
+cd clearhire_production
 
 git remote add origin https://github.com/YOUR_USERNAME/clearhire-app.git
 git branch -M main
