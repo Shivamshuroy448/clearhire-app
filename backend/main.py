@@ -43,11 +43,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _load_env():
+    env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        except Exception:
+            pass
+
+_load_env()
+
 # API Endpoints
+@app.get("/api/config")
+@app.get("/config")
+def get_firebase_config():
+    return {
+        "apiKey": os.environ.get("FIREBASE_API_KEY", ""),
+        "authDomain": os.environ.get("FIREBASE_AUTH_DOMAIN", "clearhire-d6b3f.firebaseapp.com"),
+        "projectId": os.environ.get("FIREBASE_PROJECT_ID", "clearhire-d6b3f"),
+        "storageBucket": os.environ.get("FIREBASE_STORAGE_BUCKET", "clearhire-d6b3f.firebasestorage.app"),
+        "messagingSenderId": os.environ.get("FIREBASE_MESSAGING_SENDER_ID", "829013648461"),
+        "appId": os.environ.get("FIREBASE_APP_ID", "1:829013648461:web:aeb062d2b4c07b5d782804"),
+        "measurementId": os.environ.get("FIREBASE_MEASUREMENT_ID", "G-GBTRZ558WE")
+    }
+
 @app.get("/dashboard", response_model=models.DashboardData)
 def get_dashboard_data(user_id: str = "guest", db: Session = Depends(get_db)):
     # Fetch from DB
     db_apps = db.query(DBApplication).filter(DBApplication.user_id == user_id).all()
+    if not db_apps:
+        try:
+            from mock_data import generate_mock_data
+            for m in generate_mock_data():
+                db.add(DBApplication(
+                    id=m.id,
+                    user_id=user_id,
+                    company_name=m.company_name,
+                    position=m.position,
+                    current_stage=m.current_stage.value,
+                    notes=m.notes,
+                    applied_date=m.applied_date,
+                    last_contact_date=m.last_contact_date,
+                    recruiter_name=m.recruiter_name
+                ))
+            db.commit()
+            db_apps = db.query(DBApplication).filter(DBApplication.user_id == user_id).all()
+        except Exception:
+            pass
     
     # Convert to Pydantic models
     applications = []

@@ -7,27 +7,36 @@ const API_BASE = window.location.hostname === 'localhost' || window.location.hos
     : ''; // Relative path for production (e.g. /api/... if served from same origin)
 
 // --- Firebase Configuration ---
-// REPLACE WITH YOUR FIREBASE CONFIGURATION
-const firebaseConfig = {
-    apiKey: "AIzaSyCy5D2r_IreyYBBJFb8NXSxO4LfenaNwX8",
-    authDomain: "clearhire-688b3.firebaseapp.com",
-    projectId: "clearhire-688b3",
-    storageBucket: "clearhire-688b3.firebasestorage.app",
-    messagingSenderId: "510752628612",
-    appId: "1:510752628612:web:02162f5c6ae8b5145147d1",
-    measurementId: "G-MW0FJ95TQ0"
-};
+// Client-side Firebase credentials are dynamically fetched from the server /api/config
+// to ensure zero sensitive API keys are ever committed to git or exposed to repository scanners.
+let auth = null;
+let authInitPromise = null;
 
-// Initialize Firebase safely
-let auth;
-try {
-    if (firebase.apps.length === 0) {
-        firebase.initializeApp(firebaseConfig);
-    }
-    auth = firebase.auth();
-} catch (error) {
-    console.error("Firebase Initialization Error. Make sure you updated the config.", error);
-}
+const initFirebase = async () => {
+    if (auth) return auth;
+    if (authInitPromise) return authInitPromise;
+
+    authInitPromise = (async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/config`);
+            if (res.ok) {
+                const config = await res.json();
+                if (config && config.apiKey) {
+                    if (firebase.apps.length === 0) {
+                        firebase.initializeApp(config);
+                    }
+                    auth = firebase.auth();
+                    return auth;
+                }
+            }
+        } catch (err) {
+            console.warn("Could not load remote Firebase configuration:", err);
+        }
+        return null;
+    })();
+
+    return authInitPromise;
+};
 
 // --- Components ---
 
@@ -374,8 +383,9 @@ const AuthPage = ({ onDemoLogin }) => {
         setError("");
         setLoading(true);
 
-        if (!auth) {
-            setError("Firebase not initialized. Please verify configuration.");
+        const firebaseAuth = auth || (await initFirebase());
+        if (!firebaseAuth) {
+            setError("Firebase is not initialized. Please verify the FIREBASE_API_KEY environment variable.");
             setLoading(false);
             return;
         }
@@ -383,7 +393,7 @@ const AuthPage = ({ onDemoLogin }) => {
         try {
             const provider = new firebase.auth.GoogleAuthProvider();
             provider.setCustomParameters({ prompt: 'select_account' });
-            await auth.signInWithPopup(provider);
+            await firebaseAuth.signInWithPopup(provider);
         } catch (err) {
             console.error("Google sign-in error:", err);
             if (err.code === "auth/unauthorized-domain") {
@@ -482,16 +492,18 @@ const App = () => {
     const [draftData, setDraftData] = useState(null);
 
     useEffect(() => {
-        // Auth Listener
+        // Auth Listener with async Firebase initialization
         let unsubscribe;
-        if (auth) {
-            unsubscribe = auth.onAuthStateChanged((u) => {
-                setUser(u);
+        initFirebase().then((firebaseAuth) => {
+            if (firebaseAuth) {
+                unsubscribe = firebaseAuth.onAuthStateChanged((u) => {
+                    setUser(u);
+                    setAuthChecking(false);
+                });
+            } else {
                 setAuthChecking(false);
-            });
-        } else {
-            setAuthChecking(false); // Fallback if auth fails to init
-        }
+            }
+        });
         return () => unsubscribe && unsubscribe();
     }, []);
 
