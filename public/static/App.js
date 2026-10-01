@@ -278,6 +278,243 @@ const DraftModal = ({ isOpen, onClose, draft, currentStrategy, onSelectStrategy,
     );
 };
 
+const LinkedInSyncModal = ({ isOpen, onClose, user, onSimulateSync, onRefresh }) => {
+    const [tab, setTab] = useState('extension');
+    const [manualText, setManualText] = useState('');
+    const [importing, setImporting] = useState(false);
+    const [importMsg, setImportMsg] = useState('');
+
+    if (!isOpen) return null;
+
+    const handleManualImport = async () => {
+        if (!manualText.trim()) return;
+        setImporting(true);
+        setImportMsg('');
+
+        let parsedJobs = [];
+        try {
+            const json = JSON.parse(manualText);
+            if (Array.isArray(json)) {
+                parsedJobs = json;
+            } else if (json.jobs && Array.isArray(json.jobs)) {
+                parsedJobs = json.jobs;
+            }
+        } catch (_) {
+            const lines = manualText.split('\n').filter(l => l.trim().length > 0);
+            parsedJobs = lines.map(line => {
+                const parts = line.split(/[,\t|]/).map(p => p.trim());
+                return {
+                    company_name: parts[0] || 'Unknown',
+                    position: parts[1] || 'Software Engineer',
+                    current_stage: parts[2] || 'Applied',
+                    notes: 'Manual import to ClearHire'
+                };
+            });
+        }
+
+        if (parsedJobs.length === 0) {
+            setImportMsg('Could not parse any jobs. Please provide JSON or line format.');
+            setImporting(false);
+            return;
+        }
+
+        try {
+            const res = await fetch(`${API_BASE}/sync/linkedin/import`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: user ? user.uid : 'guest',
+                    jobs: parsedJobs
+                })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setImportMsg(data.message || 'Successfully imported jobs!');
+                setTimeout(() => {
+                    onRefresh();
+                    onClose();
+                }, 1200);
+            } else {
+                setImportMsg(data.detail || 'Import failed.');
+            }
+        } catch (err) {
+            setImportMsg('Server error during import.');
+        } finally {
+            setImporting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-100">
+                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                    <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-lg text-slate-800">Sync LinkedIn Job Tracker</h3>
+                            <p className="text-xs text-slate-500">Automatically pull applied roles directly into your dashboard</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors p-1">
+                        <i data-lucide="x" className="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <div className="flex border-b border-slate-200 px-6 pt-2 bg-slate-50/50">
+                    <button
+                        onClick={() => setTab('extension')}
+                        className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-colors ${
+                            tab === 'extension'
+                                ? 'border-blue-600 text-blue-600'
+                                : 'border-transparent text-slate-500 hover:text-slate-700'
+                        }`}
+                    >
+                        Chrome Extension (Recommended)
+                    </button>
+                    <button
+                        onClick={() => setTab('instant')}
+                        className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-colors ${
+                            tab === 'instant'
+                                ? 'border-blue-600 text-blue-600'
+                                : 'border-transparent text-slate-500 hover:text-slate-700'
+                        }`}
+                    >
+                        Instant Sample Sync
+                    </button>
+                    <button
+                        onClick={() => setTab('manual')}
+                        className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-colors ${
+                            tab === 'manual'
+                                ? 'border-blue-600 text-blue-600'
+                                : 'border-transparent text-slate-500 hover:text-slate-700'
+                        }`}
+                    >
+                        Manual Import
+                    </button>
+                </div>
+
+                <div className="p-6">
+                    {tab === 'extension' && (
+                        <div className="space-y-4">
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 leading-relaxed">
+                                <strong>Automatic Sync:</strong> The ClearHire Chrome Extension detects your tracked applications on LinkedIn and imports them with a single click.
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">1</div>
+                                    <div className="text-xs text-slate-700">
+                                        <div className="font-semibold text-slate-800 mb-1">Download Extension Package</div>
+                                        <p className="mb-2">Download and extract the lightweight ClearHire extension file.</p>
+                                        <a
+                                            href="/clearhire-extension.zip"
+                                            download="clearhire-extension.zip"
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-semibold text-xs transition-colors"
+                                        >
+                                            <i data-lucide="download" className="w-3.5 h-3.5"></i>
+                                            <span>Download clearhire-extension.zip</span>
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">2</div>
+                                    <div className="text-xs text-slate-700">
+                                        <div className="font-semibold text-slate-800 mb-1">Load into Chrome</div>
+                                        <p>Open <code className="bg-slate-200 px-1 py-0.5 rounded text-[11px]">chrome://extensions</code>, turn on <strong>Developer mode</strong> (top right), click <strong>Load unpacked</strong>, and select the unzipped <code className="bg-slate-200 px-1 py-0.5 rounded text-[11px]">extension</code> folder.</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-start gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                    <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">3</div>
+                                    <div className="text-xs text-slate-700">
+                                        <div className="font-semibold text-slate-800 mb-1">Open LinkedIn &amp; Sync</div>
+                                        <p className="mb-2">Go to your LinkedIn Job Tracker. A floating ClearHire badge appears on the bottom-right corner to sync applications!</p>
+                                        <a
+                                            href="https://www.linkedin.com/jobs/tracker/"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-md font-semibold text-xs transition-colors"
+                                        >
+                                            <span>Open LinkedIn Job Tracker &rarr;</span>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {tab === 'instant' && (
+                        <div className="space-y-4 py-2 text-center">
+                            <div className="w-12 h-12 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center mx-auto">
+                                <i data-lucide="zap" className="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-base text-slate-800">Instant Demo Simulation</h4>
+                                <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                                    Want to quickly test how LinkedIn Job Tracker applications integrate with ClearHire before installing the Chrome Extension?
+                                </p>
+                            </div>
+                            <div className="bg-slate-50 rounded-lg border border-slate-200 p-3 text-xs text-slate-600 text-left max-w-sm mx-auto space-y-1">
+                                <div className="font-semibold text-slate-800 mb-1">Will import sample tracked roles:</div>
+                                <div>• <strong>Datadog</strong> - Software Engineer (Screening)</div>
+                                <div>• <strong>Scale AI</strong> - Computer Vision Engineer (Interview)</div>
+                                <div>• <strong>Notion</strong> - Product Engineer (Applied)</div>
+                            </div>
+                            <button
+                                onClick={onSimulateSync}
+                                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs shadow-sm transition-all"
+                            >
+                                Populate 3 Tracked Jobs Now
+                            </button>
+                        </div>
+                    )}
+
+                    {tab === 'manual' && (
+                        <div className="space-y-3">
+                            <label className="block text-xs font-semibold text-slate-600">
+                                Paste JSON or line-by-line (Company, Role, Stage)
+                            </label>
+                            <textarea
+                                value={manualText}
+                                onChange={(e) => setManualText(e.target.value)}
+                                placeholder="Airbnb, Frontend Engineer, Interview&#10;Stripe, ML Engineer, Screening&#10;Google, SWE, Applied"
+                                rows={6}
+                                className="w-full text-xs font-mono p-3 border border-slate-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                            {importMsg && (
+                                <div className="text-xs font-semibold text-blue-700 bg-blue-50 p-2 rounded">
+                                    {importMsg}
+                                </div>
+                            )}
+                            <button
+                                onClick={handleManualImport}
+                                disabled={importing || !manualText.trim()}
+                                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs disabled:opacity-50 transition-colors"
+                            >
+                                {importing ? 'Importing...' : 'Import to ClearHire'}
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-200 transition-colors"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const Header = ({ user, onLogout, onSync, onSyncLinkedIn }) => {
     const [syncing, setSyncing] = useState(false);
     const [syncingLinkedIn, setSyncingLinkedIn] = useState(false);
@@ -566,6 +803,10 @@ const App = () => {
     const [currentStrategy, setCurrentStrategy] = useState("nudge");
     const [draftLoading, setDraftLoading] = useState(false);
 
+    // Sync States
+    const [gmailToken, setGmailToken] = useState(null);
+    const [isLinkedInModalOpen, setIsLinkedInModalOpen] = useState(false);
+
     useEffect(() => {
         // Auth Listener with async Firebase initialization
         let unsubscribe;
@@ -600,12 +841,17 @@ const App = () => {
     useEffect(() => {
         if (user) {
             fetchData();
+            window.postMessage({
+                type: "CLEARHIRE_SET_USER",
+                userId: user.uid,
+                apiBase: window.location.origin
+            }, "*");
         }
     }, [user]);
 
     useEffect(() => {
         if (!loading) lucide.createIcons();
-    }, [loading, data, isModalOpen, isDraftModalOpen]);
+    }, [loading, data, isModalOpen, isDraftModalOpen, isLinkedInModalOpen]);
 
     const handleLogout = () => {
         if (auth) {
@@ -619,26 +865,89 @@ const App = () => {
     };
 
     const handleSync = async () => {
+        if (!user) return;
+
+        // Demo Mode
+        if (user.uid === 'demo-user') {
+            try {
+                const response = await fetch(`${API_BASE}/sync/gmail?user_id=demo-user`, { method: 'POST' });
+                const result = await response.json();
+                if (response.ok) {
+                    alert(`Demo Gmail Sync:\n\n${(result.updates || []).join('\n')}`);
+                    fetchData();
+                }
+            } catch (err) {
+                console.error("Demo sync failed:", err);
+            }
+            return;
+        }
+
+        // Live Google User
         try {
-            const response = await fetch(`${API_BASE}/sync/gmail?user_id=${user.uid}`, { method: 'POST' });
-            const result = await response.json();
-            if (response.ok) {
-                alert(`Sync Complete!\n\n${result.updates.join('\n')}`);
+            let token = gmailToken;
+            if (!token) {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
+                provider.setCustomParameters({ prompt: 'select_account' });
+
+                const cred = await firebase.auth().signInWithPopup(provider);
+                if (cred && cred.credential && cred.credential.accessToken) {
+                    token = cred.credential.accessToken;
+                    setGmailToken(token);
+                } else {
+                    throw new Error("Unable to obtain Google access token. Please ensure popup is allowed.");
+                }
+            }
+
+            const response = await fetch(`${API_BASE}/sync/gmail?user_id=${encodeURIComponent(user.uid)}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ access_token: token })
+            });
+
+            const data = await response.json();
+            if (response.status === 401) {
+                setGmailToken(null);
+                alert("Google session expired. Please click 'Sync Gmail' again to authorize.");
+                return;
+            }
+
+            if (response.ok && data.status === 'success') {
+                const updatesList = (data.updates && data.updates.length > 0)
+                    ? data.updates.map(u => `• ${u}`).join('\n')
+                    : 'All tracked applications are up-to-date.';
+                alert(`Gmail Sync Complete!\n\n${data.message || ''}\n\n${updatesList}`);
                 fetchData();
+            } else {
+                alert(`Gmail Sync Note:\n\n${data.message || (data.updates ? data.updates.join('\n') : 'Unable to complete scan.')}`);
             }
         } catch (error) {
-            console.error("Sync failed", error);
-            alert("Sync failed. Check console.");
+            console.error("Gmail sync failed:", error);
+            if (error.code === 'auth/popup-closed-by-user') {
+                alert("Gmail sync was cancelled: the Google authorization window was closed.");
+            } else if (error.code === 'auth/popup-blocked') {
+                alert("Popup blocked by browser: Please allow popups for ClearHire to connect Gmail.");
+            } else {
+                alert(`Gmail sync failed: ${error.message || error}`);
+            }
         }
     };
 
-    const handleSyncLinkedIn = async () => {
+    const handleSyncLinkedIn = () => {
+        setIsLinkedInModalOpen(true);
+    };
+
+    const handleSimulateLinkedIn = async () => {
         try {
             const response = await fetch(`${API_BASE}/sync/linkedin?user_id=${user.uid}`, { method: 'POST' });
             const result = await response.json();
             if (response.ok) {
                 alert(`LinkedIn Sync:\n\n${result.message}`);
                 fetchData();
+                setIsLinkedInModalOpen(false);
             } else {
                 alert("LinkedIn sync failed. Check console.");
             }
@@ -868,6 +1177,14 @@ const App = () => {
                 currentStrategy={currentStrategy}
                 onSelectStrategy={handleSelectStrategy}
                 loading={draftLoading}
+            />
+
+            <LinkedInSyncModal
+                isOpen={isLinkedInModalOpen}
+                onClose={() => setIsLinkedInModalOpen(false)}
+                user={user}
+                onSimulateSync={handleSimulateLinkedIn}
+                onRefresh={fetchData}
             />
         </div>
     );

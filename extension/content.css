@@ -1,0 +1,96 @@
+/* ClearHire Floating Extension Widget on LinkedIn */
+#clearhire-floating-badge {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 999999;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1e293b;
+    padding: 14px 18px;
+    width: 320px;
+    transition: all 0.2s ease-in-out;
+}
+
+#clearhire-floating-badge .ch-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+#clearhire-floating-badge .ch-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#clearhire-floating-badge .ch-logo {
+    width: 22px;
+    height: 22px;
+    background: #0284c7;
+    color: #ffffff;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+#clearhire-floating-badge .ch-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: #0f172a;
+}
+
+#clearhire-floating-badge .ch-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #94a3b8;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+}
+#clearhire-floating-badge .ch-close:hover {
+    color: #475569;
+}
+
+#clearhire-floating-badge .ch-desc {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.4;
+    margin-bottom: 12px;
+}
+
+#clearhire-floating-badge .ch-btn {
+    width: 100%;
+    padding: 8px 12px;
+    background: #0284c7;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+#clearhire-floating-badge .ch-btn:hover {
+    background: #0369a1;
+}
+
+#clearhire-floating-badge .ch-status {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #059669;
+    font-weight: 500;
+    text-align: center;
+}

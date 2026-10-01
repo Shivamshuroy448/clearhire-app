@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -6,13 +6,14 @@ from typing import List, Optional
 import os
 import uuid
 from datetime import datetime
+from pydantic import BaseModel
 
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
 from sql_models import DBApplication
 import models # Pydantic models
 from logic import calculate_risk, generate_followup_email
-from email_service import sync_gmail
+from email_service import sync_gmail, parse_email_date
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -217,10 +218,83 @@ def draft_email_route(app_id: str, strategy: str = "nudge", request: Optional[mo
     email_draft = generate_followup_email(app_model, risk, strategy=selected_strategy)
     return email_draft
 
+class GmailSyncRequest(BaseModel):
+    access_token: Optional[str] = None
+
 @app.post("/sync/gmail")
-def sync_gmail_route(user_id: str = "guest", db: Session = Depends(get_db)):
-    updates = sync_gmail(db, user_id)
-    return {"status": "success", "updates": updates, "message": f"Processed {len(updates)} updates from Inbox"}
+def sync_gmail_route(
+    user_id: str = "guest",
+    request: Optional[GmailSyncRequest] = None,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+    elif request and request.access_token:
+        token = request.access_token
+
+    result = sync_gmail(db, user_id, access_token=token)
+    return result
+
+class LinkedInJobItem(BaseModel):
+    company_name: str
+    position: Optional[str] = "Software Engineer"
+    current_stage: Optional[str] = "Applied"
+    notes: Optional[str] = None
+    recruiter_name: Optional[str] = None
+    applied_date: Optional[str] = None
+
+class LinkedInImportPayload(BaseModel):
+    user_id: str
+    jobs: List[LinkedInJobItem]
+
+@app.post("/sync/linkedin/import")
+def sync_linkedin_import_route(payload: LinkedInImportPayload, db: Session = Depends(get_db)):
+    imported = []
+    updated = []
+    now = datetime.now()
+    
+    for job in payload.jobs:
+        if not job.company_name or not job.company_name.strip():
+            continue
+            
+        company_clean = job.company_name.strip()
+        existing = db.query(DBApplication).filter(
+            DBApplication.user_id == payload.user_id,
+            DBApplication.company_name.ilike(company_clean)
+        ).first()
+        
+        parsed_date = parse_email_date(job.applied_date) if job.applied_date else now
+        
+        if existing:
+            if job.current_stage and existing.current_stage != job.current_stage:
+                existing.current_stage = job.current_stage
+                existing.last_contact_date = now
+                updated.append(existing.company_name)
+        else:
+            new_app = DBApplication(
+                id=f"li-{str(uuid.uuid4())[:8]}",
+                user_id=payload.user_id,
+                company_name=company_clean,
+                position=job.position or "Software Engineer",
+                current_stage=job.current_stage or "Applied",
+                notes=job.notes or "Synced from LinkedIn Job Tracker",
+                applied_date=parsed_date or now,
+                last_contact_date=now,
+                recruiter_name=job.recruiter_name
+            )
+            db.add(new_app)
+            imported.append(new_app.company_name)
+            
+    db.commit()
+    msg = f"Synced {len(imported)} new job(s) and updated {len(updated)} job(s) from LinkedIn."
+    return {
+        "status": "success",
+        "imported": imported,
+        "updated": updated,
+        "message": msg
+    }
 
 @app.post("/sync/linkedin")
 def sync_linkedin_route(user_id: str = "guest", db: Session = Depends(get_db)):

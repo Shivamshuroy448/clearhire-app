@@ -1,209 +1,288 @@
 from sqlalchemy.orm import Session
 from sql_models import DBApplication
 import models
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import re
 import os
-import os.path
-import base64
-import json
-# Optional Google API imports
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+import email.utils
+from typing import Optional, List, Dict, Any
+import requests
 
-def get_gmail_service(user_id: str):
-    """Shows basic usage of the Gmail API.
-    Lists the user's Gmail labels.
-    """
+def parse_email_date(date_str: str) -> Optional[datetime]:
+    if not date_str:
+        return None
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from googleapiclient.discovery import build
-    except ImportError:
+        dt = email.utils.parsedate_to_datetime(date_str)
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
         return None
 
-    creds = None
-    token_file = f'token_{user_id}.json'
-    if os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-        
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # CHECK ENV VAR FIRST
-            google_creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-            if google_creds_json:
-                try:
-                    client_config = json.loads(google_creds_json)
-                    flow = InstalledAppFlow.from_client_config(
-                        client_config, SCOPES)
-                except json.JSONDecodeError:
-                     raise ValueError("GOOGLE_CREDENTIALS_JSON env var is not valid JSON")
-            
-            # FALLBACK TO FILE
-            elif os.path.exists('credentials.json'):
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    'credentials.json', SCOPES)
-            else:
-                raise FileNotFoundError("Neither GOOGLE_CREDENTIALS_JSON env var nor credentials.json file found.")
-            
-            # Run the auth flow
-            # Note: run_local_server tries to open a browser window. 
-            # In production (headless), this might hang. For a real production app, 
-            # we'd need a web-based flow (redirect URI), but that requires significant architecture changes.
-            # For this MVP, we assume the user runs this locally ONCE to generate the token, 
-            # or we accept that on a cloud server this interactive step implies running it locally first and uploading the token!
-            # ACTUALLY: For Render, you cannot run `run_local_server`. 
-            # You must upload the `token_*.json` or store the REFRESH TOKEN in env vars.
-            
-            # Strategy for MVP Deployment:
-            # We will rely on uploading the `token_{user_id}.json` (or pasting its content into an ENV var) for the specific user.
-            # But the Code below is fine for hybrid dev/prod.
-            creds = flow.run_local_server(port=0)
-            
-        # Save the credentials for the next run
-        with open(token_file, 'w') as token:
-            token.write(creds.to_json())
+def extract_company(subject: str, sender: str = "") -> Optional[str]:
+    sub = subject.replace("Re:", "").replace("Fwd:", "").replace("FWD:", "").strip()
+    
+    # 1. Subject with explicit prefix "Application Received - Datadog"
+    m = re.search(r"(?:application received|interview invitation|interview confirmation|application update|status update)\s*[-:|]\s*([A-Za-z0-9&.\- ]+)", sub, re.IGNORECASE)
+    if m:
+        c = m.group(1).strip()
+        if len(c) > 1 and len(c) < 35:
+            return c
 
-    service = build('gmail', 'v1', credentials=creds)
-    return service
+    # 2. "applying to [Company]" or "application to/at/with [Company]" or "interview with [Company]"
+    m = re.search(r"(?:applying to|application to|application at|application with|interview with|interest in|career at|role at)\s+([A-Za-z0-9&.\- ]+?)(?:\s+for|\s+as|\s*[-:|!]|\s*\(|$)", sub, re.IGNORECASE)
+    if m:
+        c = m.group(1).strip()
+        if len(c) > 1 and len(c) < 35 and not c.lower().startswith("the position"):
+            return c
+            
+    # 3. "[Company] - Application Received" or "[Company] Interview" or "[Company]: Next steps"
+    m = re.search(r"^([A-Za-z0-9&.\- ]+?)\s*(?:[-:|]|\s+team|\s+careers|\s+recruiting)\s*(?:interview|application|invitation|update|offer|next steps)", sub, re.IGNORECASE)
+    if m:
+        c = m.group(1).strip()
+        if len(c) > 1 and len(c) < 35:
+            return c
 
-def parse_company_from_subject(subject: str) -> str:
-    # "Thanks for applying to [Company]"
-    # "Interview Invitation - [Company]"
-    # "Company Name - Application Received"
-    
-    # Cleaning
-    clean_subject = subject.replace("Re:", "").replace("Fwd:", "").strip()
-    
-    match_apply = re.search(r"applying to\s+(.*)", clean_subject, re.IGNORECASE)
-    if match_apply:
-        return match_apply.group(1).strip()
-    
-    match_interview = re.search(r"Interview Invitation\s+-\s+(.*)", clean_subject, re.IGNORECASE)
-    if match_interview:
-        return match_interview.group(1).strip()
-        
-    match_received = re.search(r"Application Received\s+-\s+(.*)", clean_subject, re.IGNORECASE)
-    if match_received:
-        return match_received.group(1).strip()
-    
-    # Fallback: Split by dash or pipe if present
-    if " - " in clean_subject:
-        return clean_subject.split(" - ")[-1].strip()
-    if " | " in clean_subject:
-        return clean_subject.split(" | ")[-1].strip()
-        
+    # 4. "on behalf of [Company]" in sender
+    m = re.search(r"on behalf of\s+([A-Za-z0-9&.\- ]+?)(?:<|$|\")", sender, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # 5. Sender display name like "Stripe Careers <recruiter@stripe.com>"
+    m = re.search(r"^\"?([A-Za-z0-9&.\- ]+?)\s*(?:Careers|Recruiting|Talent|HR|Team|Jobs)", sender, re.IGNORECASE)
+    if m:
+        c = m.group(1).strip()
+        if len(c) > 1 and len(c) < 35 and c.lower() not in ["greenhouse", "lever", "workday", "ashby"]:
+            return c
+            
+    # 6. Fallback to sender domain if it is a company domain (e.g. recruiter@stripe.com -> Stripe)
+    m = re.search(r"@([A-Za-z0-9\-]+)\.(?:com|io|ai|co|org)", sender)
+    if m:
+        dom = m.group(1).capitalize()
+        if dom.lower() not in ["gmail", "googlemail", "yahoo", "hotmail", "outlook", "greenhouse", "lever", "ashbyhq", "workday"]:
+            return dom
+
+    # 7. Fallback: Split by dash or pipe if present
+    if " - " in sub:
+        parts = sub.split(" - ")
+        candidate = parts[-1].strip()
+        if len(candidate) > 1 and len(candidate) < 30:
+            return candidate
+    if " | " in sub:
+        parts = sub.split(" | ")
+        candidate = parts[-1].strip()
+        if len(candidate) > 1 and len(candidate) < 30:
+            return candidate
+
     return None
 
-def sync_gmail(db: Session, user_id: str):
-    updates = []
-    
-    try:
-        service = get_gmail_service(user_id)
-        if not service:
-            # Fallback for Demo Mode or environments without live Gmail OAuth tokens
-            simulated_app = db.query(DBApplication).filter(
-                DBApplication.company_name == "Stripe",
-                DBApplication.user_id == user_id
-            ).first()
+def extract_role(subject: str, snippet: str = "") -> str:
+    combined = f"{subject} {snippet}"
+    # Look for patterns like "for Senior Software Engineer", "as an ML Engineer", "role of Product Manager"
+    m = re.search(r"(?:for (?:the )?(?:position of |role of )?|as an? |role:\s*|position:\s*)([A-Za-z0-9 /&,-]+?)(?:\s+at|\s+with|\s*[-:|!.,;]|\s*\(|$)", combined, re.IGNORECASE)
+    if m:
+        role = m.group(1).strip()
+        if 3 <= len(role) <= 45 and not any(w in role.lower() for w in ["your application", "thank you", "interview", "update", "confirmation", "the position"]):
+            return role
             
-            if not simulated_app:
-                new_app = DBApplication(
-                    id=str(uuid.uuid4()),
-                    company_name="Stripe",
-                    position="Machine Learning Engineer",
-                    current_stage="Interview",
-                    notes="Gmail Sync: Invitation to Technical Screen with ML Infrastructure Team\nSender: recruiter@stripe.com",
-                    recruiter_name="recruiter@stripe.com",
-                    applied_date=datetime.now(),
-                    last_contact_date=datetime.now(),
-                    user_id=user_id
-                )
-                db.add(new_app)
-                db.commit()
-                return [
-                    "Demo Sync: Scanned 12 recent correspondence threads",
-                    "Discovered new email: 'Stripe - Technical Interview Invitation'",
-                    "Added 'Stripe' (ML Engineer) to pipeline with stage 'Interview'"
-                ]
-            else:
-                return [
-                    "Demo Sync: Scanned inbox, all tracked applications are up-to-date.",
-                    "Live Google OAuth sync available when configured with GOOGLE_CREDENTIALS_JSON."
-                ]
-        
-        # Query for relevant emails
-        # Broad query to catch potential applications
-        query = 'subject:(application OR interview OR offer OR "thank you for applying") after:2024/01/01'
-        
-        results = service.users().messages().list(userId='me', q=query, maxResults=10).execute()
-        messages = results.get('messages', [])
-        
-        if not messages:
-            return ["No relevant emails found."]
+    common_roles = [
+        "Software Engineer", "Full Stack Engineer", "Frontend Engineer", "Backend Engineer",
+        "Machine Learning Engineer", "AI Engineer", "Data Scientist", "Product Manager",
+        "DevOps Engineer", "Site Reliability Engineer", "Security Engineer", "Engineering Manager"
+    ]
+    for r in common_roles:
+        if r.lower() in combined.lower():
+            return r
+            
+    return "Software Engineer"
 
+def extract_stage(subject: str, snippet: str = "") -> str:
+    text = f"{subject} {snippet}".lower()
+    if any(w in text for w in ["offer letter", "job offer", "pleased to offer", "congratulations on your offer"]):
+        return "Offer"
+    if any(w in text for w in ["interview", "invitation to interview", "schedule a chat", "phone screen", "technical screen", "hiring manager chat", "round 1", "round 2", "onsite"]):
+        return "Interview"
+    if any(w in text for w in ["unfortunately", "not moving forward", "other candidates", "pursue other candidates", "decided not to proceed", "will not be moving forward"]):
+        return "Rejected"
+    if any(w in text for w in ["under review", "reviewing your application", "screening", "phone call"]):
+        return "Screening"
+    return "Applied"
+
+def sync_gmail(db: Session, user_id: str, access_token: Optional[str] = None) -> Dict[str, Any]:
+    # Check if this is demo mode
+    if user_id in ["demo-user", "guest"] and not access_token:
+        # Simulated demo sync
+        simulated_app = db.query(DBApplication).filter(
+            DBApplication.company_name == "Stripe",
+            DBApplication.user_id == user_id
+        ).first()
+        
+        if not simulated_app:
+            new_app = DBApplication(
+                id=str(uuid.uuid4()),
+                company_name="Stripe",
+                position="Machine Learning Engineer",
+                current_stage="Interview",
+                notes="Gmail Sync: Invitation to Technical Screen with ML Infrastructure Team\nSender: recruiter@stripe.com",
+                recruiter_name="recruiter@stripe.com",
+                applied_date=datetime.now(),
+                last_contact_date=datetime.now(),
+                user_id=user_id
+            )
+            db.add(new_app)
+            db.commit()
+            return {
+                "status": "success",
+                "updates": [
+                    "Demo Sync: Scanned 12 recent correspondence threads",
+                    "Discovered email: 'Stripe - Technical Interview Invitation'",
+                    "Added 'Stripe' (ML Engineer) to pipeline with stage 'Interview'"
+                ],
+                "message": "Demo applications updated."
+            }
+        else:
+            return {
+                "status": "success",
+                "updates": [
+                    "Demo Sync: Scanned inbox, all tracked applications are up-to-date.",
+                    "Live Google OAuth sync available when logging in with your Google account."
+                ],
+                "message": "Demo applications are up to date."
+            }
+
+    if not access_token:
+        return {
+            "status": "error",
+            "updates": ["No Google access token provided. Please authorize Gmail access."],
+            "message": "Missing access token"
+        }
+
+    # Query Gmail REST API with the access token
+    headers = {"Authorization": f"Bearer {access_token}"}
+    query = 'subject:(application OR interview OR offer OR "applied to" OR "thank you for applying" OR "application received" OR "invitation to interview" OR "next steps")'
+    
+    url = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+    try:
+        res = requests.get(url, headers=headers, params={"q": query, "maxResults": 20}, timeout=10)
+        if res.status_code == 401:
+            return {
+                "status": "error",
+                "updates": ["Google OAuth session expired. Please grant Gmail permissions again."],
+                "message": "Google token expired"
+            }
+        if res.status_code != 200:
+            return {
+                "status": "error",
+                "updates": [f"Gmail API error ({res.status_code}): {res.text[:200]}"],
+                "message": f"Gmail API returned {res.status_code}"
+            }
+        
+        data = res.json()
+        messages = data.get("messages", [])
+        if not messages:
+            return {
+                "status": "success",
+                "updates": ["Scanned your Gmail inbox. No application or interview emails found matching criteria."],
+                "message": "No matching job application emails found."
+            }
+        
+        updates = []
+        imported_count = 0
+        updated_count = 0
+        
         for msg in messages:
-            msg_detail = service.users().messages().get(userId='me', id=msg['id']).execute()
-            payload = msg_detail['payload']
-            headers = payload.get('headers', [])
+            msg_id = msg.get("id")
+            detail_res = requests.get(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}?format=full",
+                headers=headers,
+                timeout=10
+            )
+            if detail_res.status_code != 200:
+                continue
+            
+            msg_data = detail_res.json()
+            snippet = msg_data.get("snippet", "")
+            payload = msg_data.get("payload", {})
+            msg_headers = payload.get("headers", [])
             
             subject = ""
             sender = ""
-            for h in headers:
-                if h['name'] == 'Subject':
-                    subject = h['value']
-                if h['name'] == 'From':
-                    sender = h['value']
+            date_str = ""
+            for h in msg_headers:
+                name = h.get("name", "").lower()
+                if name == "subject":
+                    subject = h.get("value", "")
+                elif name == "from":
+                    sender = h.get("value", "")
+                elif name == "date":
+                    date_str = h.get("value", "")
             
-            company = parse_company_from_subject(subject)
-            if not company or len(company) > 30: # Skip if parsing failed or too long
+            company = extract_company(subject, sender)
+            if not company or len(company) < 2 or len(company) > 35:
                 continue
                 
-            # Logic similar to mock, but with real data
-            db_app = db.query(DBApplication).filter(
-                DBApplication.company_name.ilike(f"%{company}%"),
-                DBApplication.user_id == user_id
+            role = extract_role(subject, snippet)
+            stage = extract_stage(subject, snippet)
+            email_date = parse_email_date(date_str)
+            
+            # Check existing application for this user and company
+            existing = db.query(DBApplication).filter(
+                DBApplication.user_id == user_id,
+                DBApplication.company_name.ilike(company)
             ).first()
             
-            if db_app:
-                 # Check for update logic (Simplified)
-                old_stage = db_app.current_stage
-                new_stage = None
+            if existing:
+                stage_order = {"Applied": 1, "Screening": 2, "Interview": 3, "Offer": 4, "Rejected": 0}
+                curr_rank = stage_order.get(existing.current_stage, 1)
+                new_rank = stage_order.get(stage, 1)
                 
-                if "Interview" in subject:
-                    new_stage = "Interview"
-                elif "Offer" in subject:
-                    new_stage = "Offer"
-                    
-                if new_stage and new_stage != old_stage:
-                    db_app.current_stage = new_stage
-                    db_app.last_contact_date = datetime.now()
+                changed = False
+                if stage == "Rejected" and existing.current_stage != "Rejected":
+                    existing.current_stage = "Rejected"
+                    changed = True
+                elif new_rank > curr_rank:
+                    existing.current_stage = stage
+                    changed = True
+                
+                if email_date and (not existing.last_contact_date or email_date > existing.last_contact_date):
+                    existing.last_contact_date = email_date
+                    changed = True
+                
+                if changed:
+                    existing.notes = f"{existing.notes}\n[Update]: {subject}"[:500]
                     db.commit()
-                    updates.append(f"Updated {company} to {new_stage}")
+                    updates.append(f"Updated {company} to '{existing.current_stage}' stage")
+                    updated_count += 1
             else:
-                # Create new
                 new_app = DBApplication(
-                    id=str(uuid.uuid4()),
+                    id=f"gm-{str(uuid.uuid4())[:8]}",
                     company_name=company,
-                    position="Software Engineer", # Default inferred
-                    current_stage="Applied",
-                    notes=f"Gmail Sync: {subject}\nSender: {sender}",
-                    recruiter_name=sender,
-                    applied_date=datetime.now(),
-                    last_contact_date=datetime.now(),
+                    position=role or "Software Engineer",
+                    current_stage=stage,
+                    notes=f"Synced from Gmail: {subject}\nFrom: {sender}\nSnippet: {snippet[:150]}",
+                    recruiter_name=sender[:100] if sender else None,
+                    applied_date=email_date or datetime.now(),
+                    last_contact_date=email_date or datetime.now(),
                     user_id=user_id
                 )
                 db.add(new_app)
                 db.commit()
-                updates.append(f"Auto-added application for {company}")
+                updates.append(f"Added {company} ({new_app.position}) - Stage: {stage}")
+                imported_count += 1
                 
-    except FileNotFoundError as e:
-        return [f"Setup Required: {str(e)}"]
-    except Exception as e:
-        return [f"Sync Error: {str(e)}"]
+        summary_msg = f"Inbox processed: {imported_count} new application(s) added, {updated_count} existing updated."
+        if not updates:
+            updates.append("Inbox scanned. All tracked applications are already up to date.")
             
-    return updates or ["Sync completed. No new updates found matching criteria."]
+        return {
+            "status": "success",
+            "updates": updates,
+            "message": summary_msg
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "updates": [f"Error during Gmail sync: {str(e)}"],
+            "message": str(e)
+        }

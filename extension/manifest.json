@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "ClearHire - LinkedIn Job Tracker Sync",
+  "version": "1.0.0",
+  "description": "Sync tracked job applications from LinkedIn directly into your ClearHire candidate dashboard.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.linkedin.com/*",
+    "https://clearhire-app.vercel.app/*",
+    "http://localhost:8000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.linkedin.com/jobs/*",
+        "https://*.linkedin.com/jobs/tracker/*",
+        "https://clearhire-app.vercel.app/*",
+        "http://localhost:8000/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
