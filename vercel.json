@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    { "source": "/dashboard", "destination": "/api/index.py" },
+    { "source": "/applications/(.*)", "destination": "/api/index.py" },
+    { "source": "/applications", "destination": "/api/index.py" },
+    { "source": "/sync/(.*)", "destination": "/api/index.py" },
+    { "source": "/api/(.*)", "destination": "/api/index.py" }
+  ]
+}
