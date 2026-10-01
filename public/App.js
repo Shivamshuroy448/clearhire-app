@@ -245,7 +245,7 @@ const Header = ({ user, onLogout, onSync }) => {
                                 <i data-lucide={syncing ? "loader-2" : "refresh-cw"} className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`}></i>
                                 <span>{syncing ? 'Syncing...' : 'Sync Gmail'}</span>
                             </button>
-                            <span className="text-sm text-slate-500 hidden md:block border-l border-slate-200 pl-4">{user.email}</span>
+                            <span className="text-sm text-slate-500 hidden md:block border-l border-slate-200 pl-4">{user.displayName || user.email}</span>
                             <button onClick={onLogout} className="text-sm font-medium text-slate-600 hover:text-red-600">Logout</button>
                         </>
                     ) : (
@@ -366,31 +366,35 @@ const ApplicationModal = ({ isOpen, onClose, onSave, initialData }) => {
     );
 };
 
-const AuthPage = ({ isSignup, onSwitch, onDemoLogin }) => {
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
+const AuthPage = ({ onDemoLogin }) => {
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    const handleGoogleLogin = async () => {
         setError("");
         setLoading(true);
 
         if (!auth) {
-            setError("Firebase not initialized. Please checking config in App.js");
+            setError("Firebase not initialized. Please verify configuration.");
             setLoading(false);
             return;
         }
 
         try {
-            if (isSignup) {
-                await auth.createUserWithEmailAndPassword(email, password);
-            } else {
-                await auth.signInWithEmailAndPassword(email, password);
-            }
+            const provider = new firebase.auth.GoogleAuthProvider();
+            provider.setCustomParameters({ prompt: 'select_account' });
+            await auth.signInWithPopup(provider);
         } catch (err) {
-            setError(err.message);
+            console.error("Google sign-in error:", err);
+            if (err.code === "auth/unauthorized-domain") {
+                setError(`Domain (${window.location.hostname}) is not authorized in Firebase. Add it to Firebase Console > Authentication > Settings > Authorized domains.`);
+            } else if (err.code === "auth/popup-closed-by-user") {
+                setError("Sign-in popup was closed before completion. Please try again.");
+            } else if (err.code === "auth/cancelled-popup-request") {
+                // Ignore multiple popup triggers
+            } else {
+                setError(err.message || "Failed to sign in with Google.");
+            }
         } finally {
             setLoading(false);
         }
@@ -400,72 +404,63 @@ const AuthPage = ({ isSignup, onSwitch, onDemoLogin }) => {
         <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
             <div className="max-w-md w-full bg-white rounded-xl shadow-lg border border-slate-200 p-8">
                 <div className="text-center mb-8">
-                    <div className="w-12 h-12 bg-brand-600 rounded-lg flex items-center justify-center text-white font-bold text-xl mx-auto mb-4">C</div>
-                    <h2 className="text-2xl font-bold text-slate-900">{isSignup ? "Create Account" : "Welcome Back"}</h2>
-                    <p className="text-slate-500 mt-2">Transparency in hiring starts here.</p>
+                    <div className="w-12 h-12 bg-brand-600 rounded-lg flex items-center justify-center text-white font-bold text-xl mx-auto mb-4 shadow-sm">C</div>
+                    <h2 className="text-2xl font-bold text-slate-900">Welcome to ClearHire</h2>
+                    <p className="text-slate-500 mt-2 text-sm">Automated candidate transparency and recruitment insights.</p>
                 </div>
 
                 {error && (
-                    <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg mb-4 border border-red-200">
-                        {error}
+                    <div className="bg-red-50 text-red-600 text-sm p-3.5 rounded-lg mb-6 border border-red-200 flex items-start gap-2 leading-relaxed">
+                        <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>{error}</span>
                     </div>
                 )}
 
-                <button
-                    type="button"
-                    onClick={onDemoLogin}
-                    className="w-full mb-6 bg-slate-900 hover:bg-slate-800 text-white font-medium py-3 rounded-lg transition-all flex items-center justify-center gap-2 text-sm shadow-md"
-                >
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>Explore Live Interactive Demo</span>
-                </button>
+                <div className="space-y-4">
+                    <button
+                        type="button"
+                        onClick={handleGoogleLogin}
+                        disabled={loading}
+                        className="w-full bg-white hover:bg-slate-50 text-slate-700 font-semibold py-3 px-4 border border-slate-300 rounded-lg shadow-sm transition-all flex items-center justify-center gap-3 text-sm hover:border-slate-400 active:bg-slate-100 disabled:opacity-60 cursor-pointer"
+                    >
+                        {loading ? (
+                            <span className="animate-spin rounded-full h-5 w-5 border-2 border-brand-600 border-t-transparent"></span>
+                        ) : (
+                            <>
+                                <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+                                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                                </svg>
+                                <span>Continue with Google</span>
+                            </>
+                        )}
+                    </button>
 
-                <div className="relative mb-6">
-                    <div className="absolute inset-0 flex items-center">
-                        <div className="w-full border-t border-slate-200"></div>
+                    <div className="relative py-2">
+                        <div className="absolute inset-0 flex items-center">
+                            <div className="w-full border-t border-slate-200"></div>
+                        </div>
+                        <div className="relative flex justify-center text-xs uppercase">
+                            <span className="bg-white px-3 text-slate-400 font-semibold tracking-wider">Or</span>
+                        </div>
                     </div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-white px-3 text-slate-400 font-semibold">Or Sign In with Email</span>
-                    </div>
+
+                    <button
+                        type="button"
+                        onClick={onDemoLogin}
+                        className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-3 px-4 rounded-lg transition-all flex items-center justify-center gap-2 text-sm shadow-sm cursor-pointer"
+                    >
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>Explore Live Interactive Demo</span>
+                    </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
-                        <input
-                            type="email"
-                            required
-                            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="you@example.com"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                        <input
-                            type="password"
-                            required
-                            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder="••••••••"
-                        />
-                    </div>
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 rounded-lg transition-colors flex items-center justify-center"
-                    >
-                        {loading ? <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span> : (isSignup ? "Sign Up" : "Sign In")}
-                    </button>
-                </form>
-
-                <div className="mt-6 text-center text-sm text-slate-600">
-                    {isSignup ? "Already have an account? " : "Don't have an account? "}
-                    <button onClick={onSwitch} className="text-brand-600 font-medium hover:underline">
-                        {isSignup ? "Log In" : "Sign Up"}
-                    </button>
+                <div className="mt-8 text-center text-xs text-slate-400">
+                    Instant access with Google authentication or demo mode.
                 </div>
             </div>
         </div>
@@ -479,7 +474,6 @@ const App = () => {
     const [loading, setLoading] = useState(true);
     const [user, setUser] = useState(null);
     const [authChecking, setAuthChecking] = useState(true);
-    const [isSignup, setIsSignup] = useState(false);
 
     // Modal States
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -617,7 +611,7 @@ const App = () => {
     }
 
     if (!user) {
-        return <AuthPage isSignup={isSignup} onSwitch={() => setIsSignup(!isSignup)} onDemoLogin={handleDemoLogin} />;
+        return <AuthPage onDemoLogin={handleDemoLogin} />;
     }
 
     if (!data) {
