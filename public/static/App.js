@@ -527,8 +527,14 @@ const App = () => {
     }, [loading, data, isModalOpen, isDraftModalOpen]);
 
     const handleLogout = () => {
-        if (auth) auth.signOut();
+        if (auth) {
+            try {
+                auth.signOut();
+            } catch (_) {}
+        }
+        setUser(null);
         setData(null);
+        setLoading(true);
     };
 
     const handleSync = async () => {
