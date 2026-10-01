@@ -59,6 +59,11 @@ class LoginResponse(BaseModel):
     token: str
     user_name: str
 
+class EmailDraftRequest(BaseModel):
+    strategy: Optional[str] = "nudge" # "nudge", "value_add", "timeline_check"
+
 class EmailDraftResponse(BaseModel):
     subject: str
     body: str
+    role_category: Optional[str] = "General"
+    tone: Optional[str] = "Modern Tech"

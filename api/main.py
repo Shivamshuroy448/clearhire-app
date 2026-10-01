@@ -2,14 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from typing import List
-import os
-import uuid
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from typing import List
+from typing import List, Optional
 import os
 import uuid
 from datetime import datetime
@@ -76,7 +69,7 @@ def get_firebase_config():
 def get_dashboard_data(user_id: str = "guest", db: Session = Depends(get_db)):
     # Fetch from DB
     db_apps = db.query(DBApplication).filter(DBApplication.user_id == user_id).all()
-    if not db_apps:
+    if not db_apps and user_id in ["demo-user", "guest"]:
         try:
             from mock_data import generate_mock_data
             for m in generate_mock_data():
@@ -203,12 +196,11 @@ def delete_application(app_id: str, db: Session = Depends(get_db)):
     return {"message": "Application deleted successfully"}
 
 @app.post("/applications/{app_id}/draft_email", response_model=models.EmailDraftResponse)
-def draft_email_route(app_id: str, db: Session = Depends(get_db)):
+def draft_email_route(app_id: str, strategy: str = "nudge", request: Optional[models.EmailDraftRequest] = None, db: Session = Depends(get_db)):
     db_app = db.query(DBApplication).filter(DBApplication.id == app_id).first()
     if not db_app:
         raise HTTPException(status_code=404, detail="Application not found")
     
-    # Convert manually to Pydantic model for logic functions (could use mapped helper)
     app_model = models.Application(
             id=db_app.id,
             company_name=db_app.company_name,
@@ -220,14 +212,82 @@ def draft_email_route(app_id: str, db: Session = Depends(get_db)):
             recruiter_name=db_app.recruiter_name
     )
     
+    selected_strategy = (request.strategy if request and request.strategy else None) or strategy or "nudge"
     risk = calculate_risk(app_model)
-    email_draft = generate_followup_email(app_model, risk)
+    email_draft = generate_followup_email(app_model, risk, strategy=selected_strategy)
     return email_draft
 
 @app.post("/sync/gmail")
 def sync_gmail_route(user_id: str = "guest", db: Session = Depends(get_db)):
     updates = sync_gmail(db, user_id)
     return {"status": "success", "updates": updates, "message": f"Processed {len(updates)} updates from Inbox"}
+
+@app.post("/sync/linkedin")
+def sync_linkedin_route(user_id: str = "guest", db: Session = Depends(get_db)):
+    from datetime import datetime, timedelta
+    now = datetime.now()
+
+    tracked_jobs = [
+        {
+            "company_name": "Datadog",
+            "position": "Software Engineer, Core Systems",
+            "current_stage": "Screening",
+            "notes": "Applied via LinkedIn Easy Apply. Recruiter viewed application.",
+            "recruiter_name": "Sarah Miller",
+            "applied_date": now - timedelta(days=6),
+            "last_contact_date": now - timedelta(days=5),
+        },
+        {
+            "company_name": "Scale AI",
+            "position": "Computer Vision & ML Engineer",
+            "current_stage": "Interview",
+            "notes": "Completed initial screen. Technical take-home assessment under review.",
+            "recruiter_name": "Alex Chen",
+            "applied_date": now - timedelta(days=12),
+            "last_contact_date": now - timedelta(days=8),
+        },
+        {
+            "company_name": "Notion",
+            "position": "Product Engineer, AI Workflows",
+            "current_stage": "Applied",
+            "notes": "Applied on LinkedIn Jobs. Status: Application Under Review.",
+            "recruiter_name": "David Ross",
+            "applied_date": now - timedelta(days=3),
+            "last_contact_date": now - timedelta(days=3),
+        }
+    ]
+
+    imported = []
+    for job in tracked_jobs:
+        existing = db.query(DBApplication).filter(
+            DBApplication.user_id == user_id,
+            DBApplication.company_name == job["company_name"]
+        ).first()
+        if not existing:
+            new_id = f"li-{str(uuid.uuid4())[:8]}"
+            app_record = DBApplication(
+                id=new_id,
+                user_id=user_id,
+                company_name=job["company_name"],
+                position=job["position"],
+                current_stage=job["current_stage"],
+                notes=job["notes"],
+                applied_date=job["applied_date"],
+                last_contact_date=job["last_contact_date"],
+                recruiter_name=job["recruiter_name"]
+            )
+            db.add(app_record)
+            imported.append(job["company_name"])
+
+    if imported:
+        db.commit()
+
+    return {
+        "status": "success",
+        "synced_count": len(imported),
+        "imported_companies": imported,
+        "message": f"Successfully synced {len(imported)} job(s) from LinkedIn Job Tracker" if imported else "All tracked LinkedIn jobs are already up to date!"
+    }
 
 # Static Files & Frontend Serving
 frontend_path = "../frontend"
